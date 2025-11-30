@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>信用卡分期追蹤 PWA</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'primary-dark': '#1e40af', // 藍色
+                        'primary-light': '#3b82f6', // 淺藍
+                        'bg-dark': '#111827', // 幾乎黑色
+                        'bg-light': '#f3f4f6', // 幾乎白色
+                        'card-dark': '#1f2937', // 深灰
+                        'card-light': '#ffffff', // 白色
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* 隱藏 Chrome/Safari 的滾動條 */
+        body::-webkit-scrollbar { display: none; }
+        body { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .active-tab {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        }
+
+        /* 提醒動畫 */
+        .reminder-pulse {
+            animation: pulse-ring 1s cubic-bezier(0, 0.4, 1, 0.6) infinite;
+        }
+
+        @keyframes pulse-ring {
+            0% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); /* red-500 */
+            }
+            100% {
+                box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+            }
+        }
+    </style>
+</head>
+<body class="bg-bg-light dark:bg-bg-dark text-gray-900 dark:text-gray-100 min-h-screen pb-20">
+    <div id="app" class="max-w-xl mx-auto p-4">
+
+        <header class="flex justify-between items-center mb-6">
+            <h1 class="text-2xl font-bold text-primary-dark dark:text-primary-light">分期追蹤 PWA</h1>
+            <button id="themeToggle" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition">
+                <svg id="themeIcon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    </svg>
+            </button>
+        </header>
+        
+        <nav class="flex space-x-2 bg-white dark:bg-gray-800 p-2 rounded-xl shadow-lg mb-6">
+            <button id="tab-dashboard" class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition">儀表板</button>
+            <button id="tab-credit-cards" class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition">信用卡管理</button>
+            <button id="tab-archive" class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition">歸檔</button>
+        </nav>
+
+        <div id="dashboard-view" class="space-y-6">
+            
+            <div id="reminderContainer" class="bg-yellow-100 dark:bg-yellow-900/50 p-3 rounded-lg border-l-4 border-red-500 hidden" role="alert">
+                <p id="reminderMessage" class="text-sm font-medium text-red-700 dark:text-red-300">
+                    </p>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4">
+                <div class="bg-card-light dark:bg-card-dark p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700">
+                    <p class="text-sm text-gray-500 dark:text-gray-400">當月應繳總額</p>
+                    <p id="totalMonthlyPayment" class="text-xl font-bold mt-1 text-primary-dark dark:text-primary-light">NT$0</p>
+                </div>
+                <div class="bg-card-light dark:bg-card-dark p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700">
+                    <p class="text-sm text-gray-500 dark:text-gray-400">下期預估扣款日</p>
+                    <p id="nextEstimatedDate" class="text-xl font-bold mt-1">無待繳</p>
+                </div>
+            </div>
+
+            <h2 class="text-xl font-semibold border-b border-gray-300 dark:border-gray-700 pb-2">進行中的分期</h2>
+            
+            <div class="flex space-x-2 mb-4">
+                <input type="text" id="filterText" placeholder="搜尋項目或卡片名稱..." class="flex-1 p-2 rounded-lg bg-card-light dark:bg-card-dark border border-gray-300 dark:border-gray-600 focus:ring-primary-dark focus:border-primary-dark" oninput="displayInstallments()">
+                <select id="filterCard" class="p-2 rounded-lg bg-card-light dark:bg-card-dark border border-gray-300 dark:border-gray-600" onchange="displayInstallments()">
+                    <option value="">所有卡片</option>
+                    </select>
+            </div>
+
+            <p id="noInstallments" class="text-center text-gray-500 dark:text-gray-400">目前沒有分期項目。</p>
+            <div id="installmentsList" class="space-y-4">
+                </div>
+        </div>
+
+        <div id="credit-cards-view" class="hidden space-y-4">
+            <h2 class="text-xl font-semibold border-b border-gray-300 dark:border-gray-700 pb-2">信用卡/額度列表</h2>
+            <button id="openNewCardModal" class="w-full bg-primary-light dark:bg-primary-dark text-white p-3 rounded-xl font-semibold hover:opacity-90 transition">
+                + 新增/編輯信用卡
+            </button>
+            <p id="noCards" class="text-center text-gray-500 dark:text-gray-400">目前沒有新增卡片。</p>
+            <div id="creditCardsList" class="space-y-4">
+                </div>
+        </div>
+        
+        <div id="archive-view" class="hidden space-y-4">
+            <h2 class="text-xl font-semibold border-b border-gray-300 dark:border-gray-700 pb-2">已繳清分期記錄</h2>
+            <p id="noArchive" class="text-center text-gray-500 dark:text-gray-400">目前歸檔中沒有記錄。</p>
+            <div id="archiveList" class="space-y-4">
+                </div>
+        </div>
+
+        <button id="openNewInstallmentModal" class="fixed right-6 bottom-6 w-14 h-14 bg-primary-light dark:bg-primary-dark text-white rounded-full shadow-lg text-3xl flex items-center justify-center hover:bg-primary-dark dark:hover:bg-primary-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+            +
+        </button>
+
+    </div>
+
+    <div id="cardModal" class="fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-80 flex items-center justify-center z-50 hidden">
+        <div class="bg-card-light dark:bg-card-dark p-6 rounded-xl shadow-2xl w-full max-w-sm m-4">
+            <h3 class="text-xl font-bold mb-4">新增/編輯信用卡</h3>
+            <form id="cardForm">
+                <input type="hidden" id="cardFormId">
+                
+                <div class="mb-4">
+                    <label for="cardName" class="block text-sm font-medium mb-1">銀行/卡片名稱</label>
+                    <input type="text" id="cardName" required class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-primary-light focus:border-primary-light">
+                </div>
+                
+                <div class="mb-4">
+                    <label for="statementDay" class="block text-sm font-medium mb-1">帳單結帳日 (每月幾號)</label>
+                    <input type="number" id="statementDay" required min="1" max="31" value="1" class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-primary-light focus:border-primary-light">
+                </div>
+
+                <div class="mb-4">
+                    <label for="paymentDueDay" class="block text-sm font-medium mb-1">繳款截止日 (每月幾號)</label>
+                    <input type="number" id="paymentDueDay" required min="1" max="31" value="15" class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-primary-light focus:border-primary-light">
+                </div>
+
+                <div class="mb-4">
+                    <label for="cardLimit" class="block text-sm font-medium mb-1">信用額度 (NT$)</label>
+                    <input type="number" id="cardLimit" required min="1" class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-primary-light focus:border-primary-light">
+                </div>
+
+                <div class="mb-6">
+                    <label for="cardAnnualFee" class="block text-sm font-medium mb-1">年費 (NT$)</label>
+                    <input type="number" id="cardAnnualFee" min="0" value="0" class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-primary-light focus:border-primary-light">
+                </div>
+
+                <div class="flex justify-end space-x-3">
+                    <button type="button" onclick="closeModal('cardModal')" class="px-4 py-2 bg-gray-300 dark:bg-gray-600 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-500 transition">取消</button>
+                    <button type="submit" class="px-4 py-2 bg-primary-dark dark:bg-primary-light text-white rounded-lg hover:opacity-90 transition">儲存卡片</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div id="installmentModal" class="fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-80 flex items-center justify-center z-50 hidden">
+        <div class="bg-card-light dark:bg-card-dark p-6 rounded-xl shadow-2xl w-full max-w-sm m-4">
+            <h3 id="modalTitle" class="text-xl font-bold mb-4">新增消費分期</h3>
+            <form id="installmentForm">
+                <input type="hidden" id="installmentId">
+                
+                <div class="mb-4">
+                    <label for="item" class="block text-sm font-medium mb-1">消費項目描述</label>
+                    <input type="text" id="item" required class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-primary-light focus:border-primary-light">
+                </div>
+                
+                <div class="mb-4">
+                    <label for="cardId" class="block text-sm font-medium mb-1">信用卡</label>
+                    <select id="cardId" required class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-primary-light focus:border-primary-light">
+                        </select>
+                </div>
+                
+                <div class="mb-4">
+                    <label for="amount" class="block text-sm font-medium mb-1">總金額 (NT$)</label>
+                    <input type="number" id="amount" required min="0.01" step="0.01" class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-primary-light focus:border-primary-light">
+                </div>
+                
+                <div class="mb-4">
+                    <label for="totalPeriods" class="block text-sm font-medium mb-1">總期數</label>
+                    <input type="number" id="totalPeriods" required min="1" class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-primary-light focus:border-primary-light">
+                </div>
+                
+                <div class="mb-4">
+                    <label for="paidPeriods" class="block text-sm font-medium mb-1">已繳期數 (匯入過往記錄用)</label>
+                    <input type="number" id="paidPeriods" required min="0" value="0" class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-primary-light focus:border-primary-light">
+                </div>
+                
+                <div class="mb-6">
+                    <label for="firstPaymentDate" class="block text-sm font-medium mb-1">首期繳款日期 (年-月-日)</label>
+                    <input type="date" id="firstPaymentDate" required class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-primary-light focus:border-primary-light">
+                </div>
+
+                <div class="flex justify-between items-center pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <button type="button" id="deleteInstallmentButton" onclick="deleteInstallment(document.getElementById('installmentId').value)" class="px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition hidden">
+                        刪除分期
+                    </button>
+                    <div class="flex justify-end space-x-3 ml-auto">
+                        <button type="button" onclick="closeModal('installmentModal')" class="px-4 py-2 bg-gray-300 dark:bg-gray-600 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-500 transition">取消</button>
+                        <button type="submit" class="px-4 py-2 bg-primary-dark dark:bg-primary-light text-white rounded-lg hover:opacity-90 transition">儲存分期</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+
+<script>
+    const STORAGE_KEY_INSTALLMENTS = 'pwa_installments_v3'; // 版本升級，因結構變動
+    const STORAGE_KEY_CARDS = 'pwa_credit_cards_v3';
+    const STORAGE_KEY_ARCHIVE = 'pwa_archive_v3';
+    const STORAGE_KEY_THEME = 'pwa_theme';
+
+    let installments = [];
+    let cards = [];
+    let archive = [];
+    
+    // --- 通用工具函數 ---
+
+    /**
+     * 讀取 localStorage 數據
+     */
+    function loadData(key) {
+        try {
+            const data = localStorage.getItem(key);
+            return data ? JSON.parse(data) : [];
+        } catch (error) {
+            console.error(`Error loading data for key: ${key}`, error);
+            return [];
+        }
+    }
+
+    /**
+     * 儲存數據到 localStorage (強化錯誤提示)
+     */
+    function saveData(key, data) {
+        try {
+            localStorage.setItem(key, JSON.stringify(data));
+        } catch (error) {
+            console.error(`FATAL ERROR: Failed to save data for key: ${key}. Error:`, error);
+            alert(`儲存數據失敗！可能是您的裝置儲存空間已滿或瀏覽器隱私設定阻止了儲存。錯誤詳情: ${error.message}`);
+        }
+    }
+
+    /**
+     * 格式化金額為貨幣字串 (修改為 NT$)
+     */
+    function formatCurrency(amount) {
+        return `NT$${(amount || 0).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
+    }
+    
+    /**
+     * 格式化日期為 YYYY-MM-DD
+     */
+    function formatDate(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    /**
+     * 獲取下一個繳款日期 (Date 對象)
+     * @param {string} firstPaymentDate - YYYY-MM-DD 格式的首期日期
+     * @param {number} paidPeriods - 已繳納的期數 (0, 1, 2, ...)
+     * @returns {Date} 下一次應繳款月份的 Date 對象
+     */
+    function getNextPaymentDate(firstPaymentDateStr, paidPeriods) {
+        const firstDate = new Date(firstPaymentDateStr);
+        const year = firstDate.getFullYear();
+        const month = firstDate.getMonth(); // 0-11
+        const day = firstDate.getDate(); // 1-31
+        
+        // 下一次繳款月份索引 = 首期月份索引 + 已繳期數
+        const nextPaymentIndex = month + paidPeriods; 
+        
+        // new Date() 會自動處理月份進位
+        // 為了確保日期的精確性，我們使用首期繳款的日期 (day)
+        return new Date(year, nextPaymentIndex, day); 
+    }
+    
+    /**
+     * 關閉任一模態框
+     */
+    function closeModal(id) {
+        document.getElementById(id).classList.add('hidden');
+    }
+
+    // --- 核心應用邏輯 ---
+
+    function initializeApp() {
+        installments = loadData(STORAGE_KEY_INSTALLMENTS);
+        cards = loadData(STORAGE_KEY_CARDS);
+        archive = loadData(STORAGE_KEY_ARCHIVE);
+        
+        setupEventHandlers();
+        loadTheme();
+        // 初始時先調用，確保有數據
+        displayCreditCards();
+        populateCardSelects();
+        displayInstallments();
+        displayArchive();
+        updateDashboardStats();
+        checkReminders();
+        // 預設切換到儀表板，確保 UI 狀態正確
+        switchTab('dashboard'); 
+    }
+    
+    function setupEventHandlers() {
+        document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+        
+        document.getElementById('tab-dashboard').addEventListener('click', () => switchTab('dashboard'));
+        document.getElementById('tab-credit-cards').addEventListener('click', () => switchTab('credit-cards'));
+        document.getElementById('tab-archive').addEventListener('click', () => switchTab('archive'));
+
+        document.getElementById('openNewInstallmentModal').addEventListener('click', () => openInstallmentModal());
+        document.getElementById('installmentForm').addEventListener('submit', handleInstallmentSubmit);
+        
+        document.getElementById('openNewCardModal').addEventListener('click', () => openCardModal());
+        document.getElementById('cardForm').addEventListener('submit', handleCardSubmit);
+        
+        if ('serviceWorker' in navigator) {
+             // 註冊 Service Worker
+             navigator.serviceWorker.register('sw.js')
+                .then(reg => console.log('Service Worker registered successfully. Scope: ' + reg.scope))
+                .catch(err => console.error('Service Worker registration failed:', err));
+        }
+    }
+    
+    // --- 主題切換 (淺色/深色模式) ---
+
+    function loadTheme() {
+        const savedTheme = localStorage.getItem(STORAGE_KEY_THEME) || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        setTheme(savedTheme);
+    }
+
+    function setTheme(theme) {
+        const html = document.documentElement;
+        const icon = document.getElementById('themeIcon');
+        
+        if (theme === 'dark') {
+            html.classList.add('dark');
+            // 替換為太陽圖示
+            icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707M12 6v6l2 2m-2-4l-2 2"></path>';
+        } else {
+            html.classList.remove('dark');
+            // 替換為月亮圖示
+            icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>';
+        }
+        localStorage.setItem(STORAGE_KEY_THEME, theme);
+    }
+
+    function toggleTheme() {
+        const currentTheme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+        setTheme(currentTheme === 'light' ? 'dark' : 'light');
+    }
+
+    // --- Tab 導航 ---
+
+    function switchTab(tabName) {
+        ['dashboard', 'credit-cards', 'archive'].forEach(name => {
+            const view = document.getElementById(`${name}-view`); 
+            const tabButton = document.getElementById(`tab-${name}`); 
+            
+            if (view && tabButton) { // 安全檢查
+                view.classList.add('hidden');
+                tabButton.classList.remove('active-tab', 'bg-primary-dark', 'dark:bg-primary-light', 'text-white');
+                tabButton.classList.add('text-gray-600', 'dark:text-gray-300', 'hover:bg-gray-300', 'dark:hover:bg-gray-700');
+            }
+        });
+
+        const activeView = document.getElementById(`${tabName}-view`); 
+        const activeTabButton = document.getElementById(`tab-${tabName}`); 
+        
+        if (activeView && activeTabButton) { // 安全檢查
+            activeView.classList.remove('hidden');
+            activeTabButton.classList.add('active-tab', 'bg-primary-dark', 'dark:bg-primary-light', 'text-white');
+            activeTabButton.classList.remove('text-gray-600', 'dark:text-gray-300', 'hover:bg-gray-300', 'dark:hover:bg-gray-700');
+        }
+    }
+
+    // --- 信用卡管理 ---
+
+    /**
+     * 處理新增/編輯信用卡表單提交
+     */
+    function handleCardSubmit(e) {
+        e.preventDefault();
+        
+        try {
+            const id = document.getElementById('cardFormId').value || `card-${Date.now()}`;
+            const name = document.getElementById('cardName').value.trim();
+            const statementDay = parseInt(document.getElementById('statementDay').value.trim()) || 1; // 新增
+            const paymentDueDay = parseInt(document.getElementById('paymentDueDay').value.trim()) || 1; // 新增
+            const limit = parseFloat(document.getElementById('cardLimit').value.trim()) || 0; 
+            const annualFee = parseFloat(document.getElementById('cardAnnualFee').value.trim()) || 0;
+            
+            
+            // 核心驗證
+            if (!name) {
+                alert('錯誤：請填寫「銀行/卡片名稱」。');
+                return;
+            }
+            if (isNaN(limit) || limit <= 0) {
+                alert('錯誤：信用額度必須是有效數字且大於 0。');
+                return;
+            }
+            // 驗證日期
+            if (statementDay < 1 || statementDay > 31 || paymentDueDay < 1 || paymentDueDay > 31) {
+                alert('錯誤：結帳日和繳款截止日必須在 1 到 31 之間。');
+                return;
+            }
+
+
+            const existingIndex = cards.findIndex(c => c.id === id);
+            
+            const newCardData = { 
+                name, 
+                limit, 
+                annualFee,
+                statementDay, // 儲存結帳日
+                paymentDueDay // 儲存繳款截止日
+            };
+
+            if (existingIndex > -1) {
+                cards[existingIndex] = { ...cards[existingIndex], ...newCardData };
+            } else {
+                cards.push({ id, ...newCardData });
+            }
+
+            cards.sort((a, b) => b.limit - a.limit);
+
+            saveData(STORAGE_KEY_CARDS, cards);
+            
+            // 步驟 2: UI 刷新
+            displayCreditCards();
+            populateCardSelects();
+            updateDashboardStats(); 
+            
+            // 步驟 3: 關閉模態框 
+            closeModal('cardModal');
+            
+        } catch (error) {
+            console.error('handleCardSubmit 發生錯誤:', error);
+            alert('卡片處理失敗！請檢查輸入值。錯誤詳情: ' + error.message);
+        }
+    }
+    
+    /**
+     * 打開信用卡模態框
+     */
+    function openCardModal(card = null) {
+        document.getElementById('cardFormId').value = card ? card.id : '';
+        document.getElementById('cardName').value = card ? card.name : '';
+        // 載入新的日期欄位，若不存在則設為預設值
+        document.getElementById('statementDay').value = card ? (card.statementDay || 1) : 1; 
+        document.getElementById('paymentDueDay').value = card ? (card.paymentDueDay || 15) : 15;
+        
+        document.getElementById('cardLimit').value = card ? card.limit : 0;
+        document.getElementById('cardAnnualFee').value = card ? card.annualFee : 0;
+        document.getElementById('cardModal').classList.remove('hidden');
+    }
+    
+    /**
+     * 渲染信用卡列表 (已修正：增加 'noCards' 空值檢查)
+     */
+    function displayCreditCards() {
+        const list = document.getElementById('creditCardsList');
+        // 如果 list 不存在，則提前退出，避免錯誤。
+        if (!list) return; 
+
+        list.innerHTML = '';
+        
+        // 修正點: 增加 null 檢查 (解決 'null is not an object' 錯誤)
+        const noCardsElement = document.getElementById('noCards');
+        if (noCardsElement) {
+            noCardsElement.classList.toggle('hidden', cards.length > 0);
+        }
+        
+        cards.forEach(card => {
+            // 修正：確保 card.limit 存在
+            const cardLimit = card.limit || 0;
+            const usedLimit = installments.filter(i => i.cardId === card.id).reduce((sum, i) => sum + i.remainingAmount, 0);
+            const availableLimit = cardLimit - usedLimit;
+            const percentage = cardLimit > 0 ? ((usedLimit / cardLimit) * 100).toFixed(1) : 0;
+            
+            const costDisplay = card.annualFee > 0 ? `年費: ${formatCurrency(card.annualFee)}` : `年費: 無`;
+            // 修正：新增日期顯示時處理可能不存在的欄位
+            const statementDay = card.statementDay || '-';
+            const paymentDueDay = card.paymentDueDay || '-';
+            const dateDisplay = `結帳日: ${statementDay} 號 / 繳款日: ${paymentDueDay} 號`; 
+            
+            list.innerHTML += `
+                <div class="bg-card-light dark:bg-card-dark p-4 rounded-lg shadow border border-gray-200 dark:border-gray-700">
+                    <div class="flex justify-between items-center mb-2">
+                        <h4 class="text-lg font-semibold">${card.name}</h4>
+                        <div class="space-x-2">
+                            <button onclick="openCardModal(cards.find(c => c.id === '${card.id}'))" class="text-sm text-primary-dark dark:text-primary-light hover:underline">編輯額度</button>
+                            <button onclick="deleteCard('${card.id}')" class="text-sm text-red-500 hover:underline">刪除</button>
+                        </div>
+                    </div>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mb-1">${costDisplay}</p>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">${dateDisplay}</p>
+                    <div class="text-sm">
+                        <p>總額度: <span class="font-medium">${formatCurrency(cardLimit)}</span></p>
+                        <p>剩餘額度: <span class="font-medium ${availableLimit < 0 ? 'text-red-500' : 'text-green-500'}">${formatCurrency(availableLimit)}</span></p>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mt-2">
+                        <div class="h-2.5 rounded-full ${percentage > 75 ? 'bg-red-500' : percentage > 50 ? 'bg-yellow-500' : 'bg-green-500'}" style="width: ${percentage}%"></div>
+                    </div>
+                    <p class="text-xs text-right mt-1 text-gray-500 dark:text-gray-400">${percentage}% 已使用</p>
+                </div>
+            `;
+        });
+    }
+    
+    /**
+     * 刪除卡片
+     */
+    function deleteCard(id) {
+        if (installments.some(i => i.cardId === id)) {
+            alert('此卡片尚有分期款項未繳清，請先處理或刪除相關分期項目。');
+            return;
+        }
+        if (confirm('確定要刪除這張信用卡嗎？')) {
+            cards = cards.filter(c => c.id !== id);
+            saveData(STORAGE_KEY_CARDS, cards);
+            displayCreditCards();
+            populateCardSelects();
+        }
+    }
+
+    /**
+     * 填充信用卡下拉選單 (新增消費和過濾)
+     */
+    function populateCardSelects() {
+        const cardIdSelect = document.getElementById('cardId');
+        const filterCardSelect = document.getElementById('filterCard');
+
+        if (!cardIdSelect || !filterCardSelect) return; // 安全檢查
+
+        const selects = [cardIdSelect, filterCardSelect];
+        
+        selects.forEach(select => {
+            const isFilter = select.id === 'filterCard';
+            const selectedValue = select.value;
+            
+            select.innerHTML = '';
+            if (isFilter) {
+                select.innerHTML = '<option value="">所有卡片</option>';
+            }
+            
+            cards.forEach(card => {
+                const option = document.createElement('option');
+                option.value = card.id;
+                option.textContent = card.name;
+                select.appendChild(option);
+            });
+            
+            select.value = selectedValue; // 保持選中值
+        });
+
+        // 如果沒有卡片，禁用新增分期的按鈕
+        const openNewInstallmentModalButton = document.getElementById('openNewInstallmentModal');
+        if (openNewInstallmentModalButton) {
+            openNewInstallmentModalButton.disabled = cards.length === 0;
+        }
+        
+        if (cards.length === 0) {
+             // 確保 cardId 下拉選單中顯示提示
+             cardIdSelect.innerHTML = '<option value="" disabled selected>請先新增信用卡</option>';
+        }
+    }
+    
+    // --- 分期項目管理 ---
+
+    /**
+     * 處理新增/編輯分期表單提交
+     */
+    function handleInstallmentSubmit(e) {
+        e.preventDefault();
+        const id = document.getElementById('installmentId').value || `inst-${Date.now()}`;
+        const item = document.getElementById('item').value.trim();
+        const cardId = document.getElementById('cardId').value;
+        const amount = parseFloat(document.getElementById('amount').value.trim()); 
+        const totalPeriods = parseInt(document.getElementById('totalPeriods').value.trim()); 
+        // 修正：從 date 輸入框讀取值 (YYYY-MM-DD)
+        const firstPaymentDate = document.getElementById('firstPaymentDate').value; 
+        const initialPaidPeriods = parseInt(document.getElementById('paidPeriods').value.trim()) || 0; 
+        
+        if (!cardId || isNaN(amount) || amount <= 0 || isNaN(totalPeriods) || totalPeriods <= 0 || isNaN(initialPaidPeriods) || initialPaidPeriods < 0) {
+            alert('請檢查所有輸入欄位：卡片、金額、總期數和已繳期數皆為必填且須為有效數字。');
+            return;
+        }
+
+        if (initialPaidPeriods >= totalPeriods) {
+            alert('錯誤：已繳期數不得大於或等於總期數！請檢查。');
+            return;
+        }
+        
+        const monthlyPayment = parseFloat((amount / totalPeriods).toFixed(2));
+        const remainingPeriods = totalPeriods - initialPaidPeriods;
+        // 計算剩餘金額: 總金額 - (已繳期數 * 每月繳款額)
+        const remainingAmount = amount - (initialPaidPeriods * monthlyPayment);
+
+
+        const existingIndex = installments.findIndex(i => i.id === id);
+        
+        let installmentData = {
+            id,
+            item,
+            cardId,
+            totalAmount: amount,
+            totalPeriods,
+            firstPaymentDate, // 使用 YYYY-MM-DD
+            monthlyPayment,
+            paidPeriods: initialPaidPeriods, 
+            remainingPeriods,                
+            remainingAmount,                 
+            createdAt: existingIndex > -1 ? installments[existingIndex].createdAt : Date.now()
+        };
+
+        if (existingIndex > -1) {
+            // 編輯模式：允許修改 item, cardId, paidPeriods, 和 firstPaymentDate
+            installments[existingIndex] = { 
+                ...installments[existingIndex], 
+                item, 
+                cardId,
+                firstPaymentDate, // 允許修改首期日期
+                paidPeriods: initialPaidPeriods,
+                remainingPeriods: totalPeriods - initialPaidPeriods,
+                remainingAmount: amount - (initialPaidPeriods * monthlyPayment)
+            };
+        } else {
+            installments.push(installmentData);
+        }
+
+        installments.sort((a, b) => b.createdAt - a.createdAt); // 最新在最上面
+        
+        saveData(STORAGE_KEY_INSTALLMENTS, installments);
+        displayInstallments();
+        updateDashboardStats();
+        displayCreditCards();
+        closeModal('installmentModal');
+    }
+    
+    /**
+     * 打開分期模態框
+     */
+    function openInstallmentModal(installment = null) {
+        if (cards.length === 0) {
+            alert('請先在「信用卡管理」中新增一張信用卡！');
+            return;
+        }
+        
+        const isEdit = !!installment;
+        
+        document.getElementById('modalTitle').textContent = isEdit ? '編輯消費分期' : '新增消費分期';
+        document.getElementById('installmentId').value = isEdit ? installment.id : '';
+        document.getElementById('item').value = isEdit ? installment.item : '';
+        document.getElementById('cardId').value = isEdit ? installment.cardId : (cards[0] ? cards[0].id : ''); 
+        
+        // 核心財務數據 (新增時可寫，編輯時禁用)
+        document.getElementById('amount').value = isEdit ? installment.totalAmount : '';
+        document.getElementById('totalPeriods').value = isEdit ? installment.totalPeriods : '';
+        
+        document.getElementById('amount').disabled = isEdit;
+        document.getElementById('totalPeriods').disabled = isEdit;
+        
+        // 可編輯欄位：已繳期數和首期繳款日期
+        document.getElementById('paidPeriods').value = isEdit ? installment.paidPeriods : 0; 
+        document.getElementById('firstPaymentDate').value = isEdit ? installment.firstPaymentDate : formatDate(new Date());
+
+        // 控制刪除按鈕顯示
+        const deleteButton = document.getElementById('deleteInstallmentButton');
+        if (isEdit) {
+            deleteButton.classList.remove('hidden');
+        } else {
+            deleteButton.classList.add('hidden');
+        }
+        
+        document.getElementById('installmentModal').classList.remove('hidden');
+    }
+    
+    /**
+     * 刪除分期項目
+     */
+    function deleteInstallment(id) {
+        if (!id) return;
+        
+        if (confirm('確定要刪除這筆分期記錄嗎？此操作無法撤銷。')) {
+            installments = installments.filter(i => i.id !== id);
+            saveData(STORAGE_KEY_INSTALLMENTS, installments);
+            
+            displayInstallments();
+            updateDashboardStats();
+            displayCreditCards();
+            closeModal('installmentModal');
+        }
+    }
+
+
+    /**
+     * 渲染分期列表 (包含搜尋/過濾)
+     */
+    function displayInstallments() {
+        const list = document.getElementById('installmentsList');
+        const filterText = document.getElementById('filterText').value.toLowerCase();
+        const filterCardId = document.getElementById('filterCard').value;
+        if (!list) return; // 安全檢查
+
+        list.innerHTML = '';
+
+        const filtered = installments.filter(i => {
+            const card = cards.find(c => c.id === i.cardId);
+            const cardName = card ? card.name.toLowerCase() : '';
+            const itemMatch = i.item.toLowerCase().includes(filterText);
+            const cardMatch = cardName.includes(filterText);
+            const cardFilter = filterCardId ? i.cardId === filterCardId : true;
+            return (itemMatch || cardMatch) && cardFilter;
+        });
+        
+        const noInstallmentsElement = document.getElementById('noInstallments');
+        if (noInstallmentsElement) {
+            noInstallmentsElement.classList.toggle('hidden', filtered.length > 0);
+        }
+
+        filtered.forEach(item => {
+            const card = cards.find(c => c.id === item.cardId);
+            // 獲取下一次應繳款的完整日期
+            const nextPaymentDate = getNextPaymentDate(item.firstPaymentDate, item.paidPeriods);
+            
+            // 下期扣款預估，這裡需要結合卡片上的繳款日進行顯示，以便用戶核對。
+            // 但實際計算月份時是根據 firstPaymentDate 和 paidPeriods。
+            // 為了簡化顯示，我們直接顯示 nextPaymentDate 的日期
+            const nextPaymentDisplay = nextPaymentDate.toLocaleDateString('zh-TW', { year: 'numeric', month: 'short', day: 'numeric' });
+            
+            // 判斷是否過期：如果下期日期在今天之前，且還有剩餘期數
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const isOverdue = nextPaymentDate < today && item.remainingPeriods > 0;
+            
+            const cardName = card ? card.name : '未知卡片';
+            const progressPercentage = ((item.paidPeriods / item.totalPeriods) * 100).toFixed(0);
+
+            list.innerHTML += `
+                <div class="bg-card-light dark:bg-card-dark p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700">
+                    <div class="flex justify-between items-start">
+                        <h4 class="text-lg font-semibold truncate max-w-[70%]">${item.item}</h4>
+                        <span class="text-sm font-medium px-2 py-1 rounded-full ${isOverdue ? 'bg-red-500 text-white' : 'bg-primary-dark/10 dark:bg-primary-light/20 text-primary-dark dark:text-primary-light'}">${cardName}</span>
+                    </div>
+                    
+                    <div class="mt-2 text-sm space-y-1">
+                        <p>單期應繳金額: <span class="font-bold">${formatCurrency(item.monthlyPayment)}</span></p>
+                        <p>剩餘期數/總期數: <span class="font-medium">${item.remainingPeriods} / ${item.totalPeriods}</span></p>
+                        <p class="${isOverdue ? 'text-red-500 font-bold' : ''}">下期扣款預估: <span class="font-medium">${nextPaymentDisplay}</span></p>
+                        <p>剩餘總金額: <span class="font-bold text-red-600 dark:text-red-400">${formatCurrency(item.remainingAmount)}</span></p>
+                    </div>
+                    
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mt-3 mb-2">
+                        <div class="h-2 rounded-full bg-green-500" style="width: ${progressPercentage}%"></div>
+                    </div>
+                    <p class="text-xs text-right text-gray-500 dark:text-gray-400">進度: ${progressPercentage}% (期)</p>
+                    
+                    <div class="flex justify-end space-x-2 mt-4">
+                        <button onclick="markPayment('${item.id}')" class="px-3 py-1 text-sm bg-green-500 hover:bg-green-600 text-white rounded-lg transition">繳一期</button>
+                        <button onclick="openInstallmentModal(installments.find(i => i.id === '${item.id}'))" class="px-3 py-1 text-sm bg-gray-300 dark:bg-gray-600 hover:bg-gray-400 dark:hover:bg-gray-500 rounded-lg transition">編輯</button>
+                    </div>
+                </div>
+            `;
+        });
+    }
+    
+    /**
+     * 逐筆減少 (繳一期)
+     */
+    function markPayment(id) {
+        const index = installments.findIndex(i => i.id === id);
+        if (index === -1) return;
+
+        const item = installments[index];
+        
+        // 在這裡重新計算 remainingAmount 是最準確的
+        const monthlyPayment = parseFloat((item.totalAmount / item.totalPeriods).toFixed(2));
+        
+        let newRemainingAmount = item.remainingAmount - monthlyPayment;
+        let newRemainingPeriods = item.remainingPeriods - 1;
+        let newPaidPeriods = item.paidPeriods + 1;
+        
+        // 處理餘額不足以支付最後一期的情況 (例如四捨五入導致的微小誤差)
+        if (newRemainingPeriods === 0) {
+            newRemainingAmount = 0; 
+        }
+
+        item.paidPeriods = newPaidPeriods;
+        item.remainingPeriods = newRemainingPeriods;
+        item.remainingAmount = newRemainingAmount;
+
+        if (item.remainingPeriods <= 0) {
+            archiveItem(item);
+            installments.splice(index, 1);
+        } else {
+            installments[index] = item;
+        }
+        
+        saveData(STORAGE_KEY_INSTALLMENTS, installments);
+        displayInstallments();
+        updateDashboardStats();
+        displayCreditCards();
+    }
+    
+    // --- 儀表板與統計 ---
+
+    /**
+     * 更新儀表板上的統計數據
+     */
+    function updateDashboardStats() {
+        let totalPayment = 0;
+        let earliestNextPaymentDate = null;
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        // Date.getMonth() 是 0-11
+        const currentMonth = now.getMonth(); 
+
+        installments.forEach(item => {
+            const card = cards.find(c => c.id === item.cardId);
+            const paymentDueDay = card ? (card.paymentDueDay || 15) : 15;
+            
+            // 該分期應繳的日期
+            const nextPaymentDate = getNextPaymentDate(item.firstPaymentDate, item.paidPeriods);
+            
+            // 注意：我們在這裡使用 nextPaymentDate 的月份，並將日期強制設為卡片繳款日，以符合「帳單結算邏輯」
+            const nextPaymentMonth = nextPaymentDate.getMonth();
+            const nextPaymentYear = nextPaymentDate.getFullYear();
+            
+            const effectivePaymentDate = new Date(nextPaymentYear, nextPaymentMonth, paymentDueDay);
+            
+            // 檢查是否是當月應繳 (當月應繳定義為：月份相符，且繳款日尚未過去)
+            const isDueThisMonth = effectivePaymentDate.getFullYear() === currentYear 
+                                   && effectivePaymentDate.getMonth() === currentMonth 
+                                   && effectivePaymentDate >= now; // 必須是尚未繳款的
+
+            if (isDueThisMonth) {
+                totalPayment += item.monthlyPayment;
+            }
+            
+            // 找出最早的下一次**尚未到期**的繳款日
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            if (effectivePaymentDate >= today) {
+                if (!earliestNextPaymentDate || effectivePaymentDate < earliestNextPaymentDate) {
+                    earliestNextPaymentDate = effectivePaymentDate;
+                }
+            }
+        });
+
+        document.getElementById('totalMonthlyPayment').textContent = formatCurrency(totalPayment);
+        
+        if (earliestNextPaymentDate) {
+            document.getElementById('nextEstimatedDate').textContent = new Date(earliestNextPaymentDate).toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' });
+        } else {
+            document.getElementById('nextEstimatedDate').textContent = '無待繳';
+        }
+    }
+    
+    // --- 提醒 (排程) ---
+
+    /**
+     * 檢查是否有即將到期的分期
+     */
+    function checkReminders() {
+        const reminderContainer = document.getElementById('reminderContainer');
+        const reminderMessage = document.getElementById('reminderMessage');
+        
+        if (!reminderContainer || !reminderMessage) return; // 安全檢查
+
+        const now = new Date();
+        const alertDays = 7;
+        // 提醒截止日期 (今天 + 7 天)
+        const alertThreshold = new Date(now.getFullYear(), now.getMonth(), now.getDate() + alertDays);
+        
+        let upcomingItems = [];
+
+        installments.forEach(item => {
+            const card = cards.find(c => c.id === item.cardId);
+            const paymentDueDay = card ? (card.paymentDueDay || 15) : 15;
+            
+            const nextPaymentDateBase = getNextPaymentDate(item.firstPaymentDate, item.paidPeriods);
+            // 結合卡片繳款日期的完整 Date 對象
+            const nextPaymentDate = new Date(nextPaymentDateBase.getFullYear(), nextPaymentDateBase.getMonth(), paymentDueDay);
+            
+            // 只檢查未來七天內且未繳清的
+            if (nextPaymentDate > now && nextPaymentDate <= alertThreshold && item.remainingPeriods > 0) {
+                upcomingItems.push(item);
+            }
+        });
+
+        if (upcomingItems.length > 0) {
+            const count = upcomingItems.length;
+            const nextItem = upcomingItems.sort((a,b) => getNextPaymentDate(a.firstPaymentDate, a.paidPeriods) - getNextPaymentDate(b.firstPaymentDate, b.paidPeriods))[0]; // 排序找到最早的
+            
+            // 重新計算最近一筆的繳款日
+            const nextItemCard = cards.find(c => c.id === nextItem.cardId);
+            const nextItemPaymentDay = nextItemCard ? (nextItemCard.paymentDueDay || 15) : 15;
+            const nextItemDateBase = getNextPaymentDate(nextItem.firstPaymentDate, nextItem.paidPeriods);
+            const nextItemFullDate = new Date(nextItemDateBase.getFullYear(), nextItemDateBase.getMonth(), nextItemPaymentDay);
+            
+            const nextPaymentMonthDisplay = nextItemFullDate.toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' });
+            
+            reminderMessage.innerHTML = `<span class="reminder-pulse relative inline-block mr-1 w-2 h-2 rounded-full bg-red-500"></span> <strong>${count} 筆</strong>分期即將到期！最近一筆是 ${nextItem.item} 的 ${nextPaymentMonthDisplay}。`;
+            reminderContainer.classList.remove('hidden');
+        } else {
+            reminderContainer.classList.add('hidden');
+        }
+    }
+    
+    // --- 歸檔功能 ---
+    
+    /**
+     * 將已繳清的分期移動到歸檔
+     */
+    function archiveItem(item) {
+        const card = cards.find(c => c.id === item.cardId);
+        item.cardName = card ? card.name : '未知卡片';
+        item.archivedAt = Date.now();
+        archive.unshift(item); 
+        saveData(STORAGE_KEY_ARCHIVE, archive);
+        console.log(`Archived item: ${item.item}`);
+    }
+    
+    /**
+     * 渲染歸檔列表
+     */
+    function displayArchive() {
+        const list = document.getElementById('archiveList');
+        const noArchiveElement = document.getElementById('noArchive');
+        if (!list || !noArchiveElement) return; // 安全檢查
+
+        list.innerHTML = '';
+        noArchiveElement.classList.toggle('hidden', archive.length > 0);
+
+        archive.forEach(item => {
+             const archiveDate = new Date(item.archivedAt).toLocaleDateString('zh-TW', { year: 'numeric', month: 'short', day: 'numeric' });
+             
+             // 修正 HTML 模板，確保變數正確顯示
+             list.innerHTML += `
+                 <div class="bg-card-light dark:bg-card-dark p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700 opacity-75">
+                     <div class="flex justify-between items-start">
+                         <h4 class="text-lg font-semibold truncate max-w-[70%]">${item.item}</h4>
+                         <span class="text-sm font-medium px-2 py-1 rounded-full bg-gray-500 text-white">${item.cardName}</span>
+                     </div>
+                     <div class="mt-2 text-sm space-y-1 text-gray-600 dark:text-gray-400">
+                         <p>總金額: ${formatCurrency(item.totalAmount)} / 總期數: ${item.totalPeriods}</p>
+                         <p>完成於: ${archiveDate}</p>
+                     </div>
+                 </div>
+             `;
+        });
+    }
+    
+    // --- 啟動 ---
+    window.onload = initializeApp;
+    
+</script>
+</body>
+</html>
